@@ -15,6 +15,10 @@ struct Material {
     float roughness = 0.5f;    // perceptual roughness
     float reflectance = 0.5f;  // maps to f0 = 0.16 * reflectance^2 for dielectrics (4% at 0.5)
     float3 emissive{0.0f};     // luminance in cd/m^2
+
+    // Optional procedural checkerboard over world XZ (used by the ground).
+    float checkerSize = 0.0f;
+    float3 checkerColor{0.0f};
 };
 
 struct Renderable {

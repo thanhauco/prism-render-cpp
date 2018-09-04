@@ -21,5 +21,6 @@ struct Mesh {
 };
 
 Mesh makeSphere(int segments, int rings);  // unit radius, centered at origin
+Mesh makePlane(float halfSize);            // y = 0, facing +y
 
 } // namespace prism

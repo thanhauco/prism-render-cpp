@@ -21,7 +21,14 @@ struct ShadingContext {
 };
 
 float3 shade(const ShadingContext& ctx, const Material& m, float3 p, float3 n) {
-    const PixelParams pp = makePixelParams(m.baseColor, m.metallic, m.roughness, m.reflectance);
+    float3 baseColor = m.baseColor;
+    if (m.checkerSize > 0.0f) {
+        int cx = static_cast<int>(std::floor(p.x / m.checkerSize));
+        int cz = static_cast<int>(std::floor(p.z / m.checkerSize));
+        if ((cx + cz) & 1) baseColor = m.checkerColor;
+    }
+
+    const PixelParams pp = makePixelParams(baseColor, m.metallic, m.roughness, m.reflectance);
     const float3 v = normalize(ctx.cameraPosition - p);
     if (dot(n, v) < 0.0f) n = -n;
     const float NoV = std::max(dot(n, v), 1e-4f);

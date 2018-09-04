@@ -25,4 +25,19 @@ Mesh makeSphere(int segments, int rings) {
     return mesh;
 }
 
+Mesh makePlane(float halfSize) {
+    Mesh mesh;
+    const float3 up{0, 1, 0};
+    mesh.vertices = {
+        {{-halfSize, 0, -halfSize}, up},
+        {{halfSize, 0, -halfSize}, up},
+        {{halfSize, 0, halfSize}, up},
+        {{-halfSize, 0, halfSize}, up},
+    };
+    mesh.indices = {0, 3, 2, 0, 2, 1};
+    mesh.boundsMin = {-halfSize, 0, -halfSize};
+    mesh.boundsMax = {halfSize, 0, halfSize};
+    return mesh;
+}
+
 } // namespace prism
