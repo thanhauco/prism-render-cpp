@@ -23,8 +23,8 @@ struct RasterTarget {
     bool hasAttributes() const { return !material.empty(); }
 };
 
-// Rasterizes indexed triangle meshes into a RasterTarget, interpolating attributes with
-// perspective correction.
+// Rasterizes indexed triangle meshes into a RasterTarget, with near-plane clipping and
+// perspective-correct attribute interpolation.
 class Rasterizer {
 public:
     Rasterizer(int width, int height) : width_(width), height_(height) {}
@@ -50,6 +50,7 @@ private:
         int32_t material;
     };
 
+    void clipAndEmit(const ClipVertex (&v)[3], int32_t material, CullMode cull);
     void emit(const ClipVertex& a, const ClipVertex& b, const ClipVertex& c, int32_t material,
               CullMode cull);
     static void rasterize(const Triangle& t, RasterTarget& target);

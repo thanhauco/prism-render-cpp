@@ -30,9 +30,31 @@ void Rasterizer::submit(const Mesh& mesh, const mat4& model, const mat4& viewPro
         verts[i] = {viewProj * float4(world, 1.0f), world, normalize(model.transformVector(v.normal))};
     }
     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        emit(verts[mesh.indices[i]], verts[mesh.indices[i + 1]], verts[mesh.indices[i + 2]],
-             material, cull);
+        const ClipVertex tri[3] = {verts[mesh.indices[i]], verts[mesh.indices[i + 1]],
+                                   verts[mesh.indices[i + 2]]};
+        clipAndEmit(tri, material, cull);
     }
+}
+
+// Sutherland-Hodgman against the near plane (z >= -w). One plane turns a triangle into at
+// most a quad. The other planes are handled by the screen-space bounding box and depth range.
+void Rasterizer::clipAndEmit(const ClipVertex (&in)[3], int32_t material, CullMode cull) {
+    ClipVertex out[4];
+    int n = 0;
+    for (int i = 0; i < 3; ++i) {
+        const ClipVertex& cur = in[i];
+        const ClipVertex& nxt = in[(i + 1) % 3];
+        float dc = cur.clip.z + cur.clip.w;
+        float dn = nxt.clip.z + nxt.clip.w;
+        if (dc >= 0.0f) out[n++] = cur;
+        if ((dc >= 0.0f) != (dn >= 0.0f)) {
+            float t = dc / (dc - dn);
+            out[n++] = {cur.clip + (nxt.clip - cur.clip) * t, mix(cur.world, nxt.world, t),
+                        normalize(mix(cur.normal, nxt.normal, t))};
+        }
+    }
+    if (n >= 3) emit(out[0], out[1], out[2], material, cull);
+    if (n == 4) emit(out[0], out[2], out[3], material, cull);
 }
 
 void Rasterizer::emit(const ClipVertex& a, const ClipVertex& b, const ClipVertex& c,
