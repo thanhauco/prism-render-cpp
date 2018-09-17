@@ -23,7 +23,7 @@ struct RasterTarget {
     bool hasAttributes() const { return !material.empty(); }
 };
 
-// Rasterizes indexed triangle meshes into a RasterTarget, with near-plane clipping and
+// Tile-binned, multithreaded triangle rasterizer with near-plane clipping and
 // perspective-correct attribute interpolation.
 class Rasterizer {
 public:
@@ -53,7 +53,7 @@ private:
     void clipAndEmit(const ClipVertex (&v)[3], int32_t material, CullMode cull);
     void emit(const ClipVertex& a, const ClipVertex& b, const ClipVertex& c, int32_t material,
               CullMode cull);
-    static void rasterize(const Triangle& t, RasterTarget& target);
+    static void rasterize(const Triangle& t, int x0, int y0, int x1, int y1, RasterTarget& target);
 
     int width_, height_;
     std::vector<Triangle> triangles_;

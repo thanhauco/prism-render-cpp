@@ -3,8 +3,12 @@
 #include <cfloat>
 #include <utility>
 
+#include "parallel.h"
+
 namespace prism {
 namespace {
+
+constexpr int kTileSize = 32;
 
 inline float edge(float ax, float ay, float bx, float by, float px, float py) {
     return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
@@ -98,15 +102,38 @@ void Rasterizer::emit(const ClipVertex& a, const ClipVertex& b, const ClipVertex
 }
 
 void Rasterizer::resolve(RasterTarget& target) const {
-    for (const Triangle& t : triangles_) rasterize(t, target);
+    const int tilesX = (width_ + kTileSize - 1) / kTileSize;
+    const int tilesY = (height_ + kTileSize - 1) / kTileSize;
+
+    // Binning: each tile gets the list of triangles overlapping it, in submission order.
+    std::vector<std::vector<uint32_t>> bins(static_cast<size_t>(tilesX) * tilesY);
+    for (uint32_t i = 0; i < triangles_.size(); ++i) {
+        const Triangle& t = triangles_[i];
+        for (int ty = t.minY / kTileSize; ty <= t.maxY / kTileSize; ++ty)
+            for (int tx = t.minX / kTileSize; tx <= t.maxX / kTileSize; ++tx)
+                bins[static_cast<size_t>(ty) * tilesX + tx].push_back(i);
+    }
+
+    // Tiles are disjoint, so threads never write the same pixel.
+    parallelFor(static_cast<int>(bins.size()), [&](int b) {
+        int x0 = (b % tilesX) * kTileSize;
+        int y0 = (b / tilesX) * kTileSize;
+        int x1 = std::min(x0 + kTileSize, width_) - 1;
+        int y1 = std::min(y0 + kTileSize, height_) - 1;
+        for (uint32_t i : bins[b]) rasterize(triangles_[i], x0, y0, x1, y1, target);
+    });
 }
 
-void Rasterizer::rasterize(const Triangle& t, RasterTarget& target) {
+void Rasterizer::rasterize(const Triangle& t, int x0, int y0, int x1, int y1, RasterTarget& target) {
+    x0 = std::max(x0, t.minX);
+    y0 = std::max(y0, t.minY);
+    x1 = std::min(x1, t.maxX);
+    y1 = std::min(y1, t.maxY);
     const bool attributes = target.hasAttributes();
 
-    for (int y = t.minY; y <= t.maxY; ++y) {
+    for (int y = y0; y <= y1; ++y) {
         float py = y + 0.5f;
-        for (int x = t.minX; x <= t.maxX; ++x) {
+        for (int x = x0; x <= x1; ++x) {
             float px = x + 0.5f;
             float e0 = edge(t.x[1], t.y[1], t.x[2], t.y[2], px, py);
             float e1 = edge(t.x[2], t.y[2], t.x[0], t.y[0], px, py);
