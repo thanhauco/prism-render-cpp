@@ -67,10 +67,10 @@ int main() {
     std::printf("  shading pass   %7.1f ms\n", s.shadingMs);
     std::printf("  resolve        %7.1f ms\n", s.resolveMs);
 
-    if (!writePPM("out.ppm", image)) {
-        std::fprintf(stderr, "failed to write out.ppm\n");
+    if (!writePNG("prism.png", image)) {
+        std::fprintf(stderr, "failed to write prism.png\n");
         return 1;
     }
-    std::printf("wrote out.ppm\n");
+    std::printf("wrote prism.png\n");
     return 0;
 }

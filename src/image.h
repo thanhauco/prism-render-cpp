@@ -23,7 +23,7 @@ inline float linearToSRGB(float c) {
     return c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
 }
 
-// Writes an 8-bit RGB binary PPM (P6): trivial to emit, but the files are huge.
-bool writePPM(const std::string& path, const Image& image);
+// Writes an 8-bit RGB PNG using uncompressed (stored) deflate blocks: no zlib dependency.
+bool writePNG(const std::string& path, const Image& image);
 
 } // namespace prism
