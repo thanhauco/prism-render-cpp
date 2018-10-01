@@ -50,19 +50,23 @@ int main() {
 
     Scene scene;
     addMaterialSpheres(scene);
-    // Arbitrary sun brightness for now; real units come later.
-    scene.sun = DirectionalLight{normalize(float3{0.6f, -0.7f, -0.35f}), {1.0f, 0.96f, 0.9f}, 3.0f, true};
+    // Sunny 16: the sun delivers ~110,000 lux on a clear day.
+    scene.sun = DirectionalLight{normalize(float3{0.6f, -0.7f, -0.35f}), {1.0f, 0.96f, 0.9f}, 110000.0f, true};
 
     Camera camera;
     camera.position = {0.0f, 3.4f, 7.6f};
     camera.target = {0.0f, 0.1f, -0.2f};
     camera.fovY = radians(36.0f);
+    camera.aperture = 16.0f;
+    camera.shutterSpeed = 1.0f / 125.0f;
+    camera.sensitivity = 100.0f;
 
     Renderer renderer(settings);
     Image image = renderer.render(scene, camera);
     const RenderStats& s = renderer.stats();
 
-    std::printf("prism: %dx%d (%dx SSAA)\n", settings.width, settings.height, settings.ssaa);
+    std::printf("prism: %dx%d (%dx SSAA), EV100 %.2f\n", settings.width, settings.height, settings.ssaa,
+                camera.ev100());
     std::printf("  geometry pass  %7.1f ms  (%zu triangles)\n", s.geometryMs, s.triangles);
     std::printf("  shading pass   %7.1f ms\n", s.shadingMs);
     std::printf("  resolve        %7.1f ms\n", s.resolveMs);

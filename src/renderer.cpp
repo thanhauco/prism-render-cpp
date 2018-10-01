@@ -63,10 +63,11 @@ Image Renderer::render(const Scene& scene, const Camera& camera) {
     stats_.triangles = raster.triangleCount();
     stats_.geometryMs = elapsedMs(start);
 
-    // 2. Shading pass: ACES per sample, stored display-linear.
+    // 2. Shading pass: exposure + ACES per sample, stored display-linear.
     start = Clock::now();
     ShadingContext ctx{scene, camera.position};
 
+    const float exposure = camera.exposure();
     std::vector<float3> samples(static_cast<size_t>(W) * H);
     parallelFor(H, [&](int y) {
         for (int x = 0; x < W; ++x) {
@@ -75,7 +76,7 @@ Image Renderer::render(const Scene& scene, const Camera& camera) {
             int32_t id = gbuffer.material[i];
             if (id >= 0)
                 luminance = shade(ctx, scene.materials[id], gbuffer.position[i], gbuffer.normal[i]);
-            samples[i] = tonemapACES(luminance);
+            samples[i] = tonemapACES(luminance * exposure);
         }
     });
     stats_.shadingMs = elapsedMs(start);
