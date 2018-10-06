@@ -1,5 +1,6 @@
 #include "renderer.h"
 
+#include <cfloat>
 #include <chrono>
 
 #include "brdf.h"
@@ -15,9 +16,80 @@ double elapsedMs(Clock::time_point start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
+struct ShadowMap {
+    mat4 viewProj;
+    RasterTarget depth{1, 1, false};
+    float texelWorld = 0;    // world-space size of one texel
+    float depthPerMeter = 0; // NDC depth units per world meter
+
+    // Fraction of the light that reaches p: 5x5 percentage-closer filtering with
+    // normal-offset and constant depth bias to avoid shadow acne.
+    float visibility(float3 p, float3 n) const {
+        float3 offset = p + n * (texelWorld * 1.5f);
+        float4 clip = viewProj * float4(offset, 1.0f);
+        float sx = (clip.x * 0.5f + 0.5f) * depth.width;
+        float sy = (0.5f - clip.y * 0.5f) * depth.height;
+        float z = clip.z - 2.0f * texelWorld * depthPerMeter;
+        int cx = static_cast<int>(std::floor(sx));
+        int cy = static_cast<int>(std::floor(sy));
+
+        float lit = 0.0f;
+        for (int dy = -2; dy <= 2; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                int x = cx + dx, y = cy + dy;
+                if (x < 0 || y < 0 || x >= depth.width || y >= depth.height) {
+                    lit += 1.0f;
+                    continue;
+                }
+                lit += z <= depth.depth[static_cast<size_t>(y) * depth.width + x] ? 1.0f : 0.0f;
+            }
+        }
+        return lit / 25.0f;
+    }
+};
+
+// Fits an orthographic light frustum around the bounding sphere of all shadow casters.
+ShadowMap renderShadowMap(const Scene& scene, const DirectionalLight& light, int size) {
+    float3 lo(FLT_MAX), hi(-FLT_MAX);
+    for (const Renderable& r : scene.renderables) {
+        if (!r.castShadows) continue;
+        for (int i = 0; i < 8; ++i) {
+            float3 corner{(i & 1) ? r.mesh->boundsMax.x : r.mesh->boundsMin.x,
+                          (i & 2) ? r.mesh->boundsMax.y : r.mesh->boundsMin.y,
+                          (i & 4) ? r.mesh->boundsMax.z : r.mesh->boundsMin.z};
+            float3 w = r.model.transformPoint(corner);
+            lo = min(lo, w);
+            hi = max(hi, w);
+        }
+    }
+
+    ShadowMap shadow;
+    if (lo.x > hi.x) return shadow;  // no casters
+
+    float3 center = (lo + hi) * 0.5f;
+    float radius = length(hi - lo) * 0.5f;
+    float3 toLight = -normalize(light.direction);
+    float3 up = std::abs(toLight.y) > 0.99f ? float3{1, 0, 0} : float3{0, 1, 0};
+    mat4 view = lookAt(center + toLight * (2.0f * radius), center, up);
+    float far = 4.0f * radius;
+    mat4 proj = orthographic(-radius, radius, -radius, radius, 0.0f, far);
+
+    shadow.viewProj = proj * view;
+    shadow.depth = RasterTarget(size, size, false);
+    shadow.texelWorld = 2.0f * radius / size;
+    shadow.depthPerMeter = 2.0f / far;
+
+    Rasterizer raster(size, size);
+    for (const Renderable& r : scene.renderables)
+        if (r.castShadows) raster.submit(*r.mesh, r.model, shadow.viewProj, 0, CullMode::Back);
+    raster.resolve(shadow.depth);
+    return shadow;
+}
+
 struct ShadingContext {
     const Scene& scene;
     float3 cameraPosition;
+    const ShadowMap* shadow;
 };
 
 float3 shade(const ShadingContext& ctx, const Material& m, float3 p, float3 n) {
@@ -37,7 +109,9 @@ float3 shade(const ShadingContext& ctx, const Material& m, float3 p, float3 n) {
 
     if (const auto& sun = ctx.scene.sun) {
         float3 l = -normalize(sun->direction);
-        color += surfaceShading(pp, n, v, l, NoV) * sun->color * sun->illuminance;
+        float visibility = ctx.shadow ? ctx.shadow->visibility(p, n) : 1.0f;
+        if (visibility > 0.0f)
+            color += surfaceShading(pp, n, v, l, NoV) * sun->color * (sun->illuminance * visibility);
     }
 
     return color + m.emissive;
@@ -52,8 +126,15 @@ Image Renderer::render(const Scene& scene, const Camera& camera) {
     const int H = settings_.height * ssaa;
     const float aspect = static_cast<float>(settings_.width) / settings_.height;
 
-    // 1. Geometry pass.
+    // 1. Shadow pass.
     auto start = Clock::now();
+    ShadowMap shadow;
+    const bool hasShadow = scene.sun && scene.sun->castShadows;
+    if (hasShadow) shadow = renderShadowMap(scene, *scene.sun, settings_.shadowMapSize);
+    stats_.shadowMs = elapsedMs(start);
+
+    // 2. Geometry pass.
+    start = Clock::now();
     RasterTarget gbuffer(W, H, true);
     Rasterizer raster(W, H);
     const mat4 viewProj = camera.projection(aspect) * camera.view();
@@ -63,9 +144,9 @@ Image Renderer::render(const Scene& scene, const Camera& camera) {
     stats_.triangles = raster.triangleCount();
     stats_.geometryMs = elapsedMs(start);
 
-    // 2. Shading pass: exposure + ACES per sample, stored display-linear.
+    // 3. Shading pass: exposure + ACES per sample, stored display-linear.
     start = Clock::now();
-    ShadingContext ctx{scene, camera.position};
+    ShadingContext ctx{scene, camera.position, hasShadow ? &shadow : nullptr};
 
     const float exposure = camera.exposure();
     std::vector<float3> samples(static_cast<size_t>(W) * H);
@@ -81,7 +162,7 @@ Image Renderer::render(const Scene& scene, const Camera& camera) {
     });
     stats_.shadingMs = elapsedMs(start);
 
-    // 3. Resolve: box-filter supersamples, then encode to sRGB.
+    // 4. Resolve: box-filter supersamples, then encode to sRGB.
     start = Clock::now();
     Image image;
     image.width = settings_.width;
