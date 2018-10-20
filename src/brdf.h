@@ -33,6 +33,21 @@ inline float3 F_Schlick(float3 f0, float VoH) {
 
 inline float Fd_Lambert() { return 1.0f / kPi; }
 
+// Analytic approximation of the pre-integrated DFG term for image based lighting
+// (Karis, "Physically Based Shading on Mobile"). Filament uses a baked LUT instead.
+inline float3 EnvBRDFApprox(float3 f0, float perceptualRoughness, float NoV) {
+    const float c0x = -1.0f, c0y = -0.0275f, c0z = -0.572f, c0w = 0.022f;
+    const float c1x = 1.0f, c1y = 0.0425f, c1z = 1.04f, c1w = -0.04f;
+    float rx = perceptualRoughness * c0x + c1x;
+    float ry = perceptualRoughness * c0y + c1y;
+    float rz = perceptualRoughness * c0z + c1z;
+    float rw = perceptualRoughness * c0w + c1w;
+    float a004 = std::min(rx * rx, std::exp2(-9.28f * NoV)) * rx + ry;
+    float scale = a004 * -1.04f + rz;
+    float bias = a004 * 1.04f + rw;
+    return f0 * scale + float3(bias);
+}
+
 // Per-pixel material inputs derived from a Material, as in Filament's PixelParams.
 struct PixelParams {
     float3 diffuseColor;

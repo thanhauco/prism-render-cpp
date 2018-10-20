@@ -4,6 +4,7 @@
 #include <optional>
 #include <vector>
 
+#include "environment.h"
 #include "mesh.h"
 
 namespace prism {
@@ -42,6 +43,7 @@ struct Scene {
     std::vector<Material> materials;
     std::vector<Renderable> renderables;
     std::optional<DirectionalLight> sun;
+    std::unique_ptr<Environment> environment;
 
     const Mesh* addMesh(Mesh mesh) {
         meshes.push_back(std::make_unique<Mesh>(std::move(mesh)));

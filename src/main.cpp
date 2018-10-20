@@ -53,6 +53,11 @@ int main() {
     // Sunny 16: the sun delivers ~110,000 lux on a clear day.
     scene.sun = DirectionalLight{normalize(float3{0.6f, -0.7f, -0.35f}), {1.0f, 0.96f, 0.9f}, 110000.0f, true};
 
+    // Clear blue sky, fed to the renderer as an image based light.
+    SkyParams sky;
+    sky.sunDirection = normalize(float3{-0.6f, 0.7f, 0.35f});
+    scene.environment = std::make_unique<Environment>(sky);
+
     Camera camera;
     camera.position = {0.0f, 3.4f, 7.6f};
     camera.target = {0.0f, 0.1f, -0.2f};

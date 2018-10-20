@@ -88,6 +88,7 @@ ShadowMap renderShadowMap(const Scene& scene, const DirectionalLight& light, int
 
 struct ShadingContext {
     const Scene& scene;
+    const Environment& env;
     float3 cameraPosition;
     const ShadowMap* shadow;
 };
@@ -113,6 +114,13 @@ float3 shade(const ShadingContext& ctx, const Material& m, float3 p, float3 n) {
         if (visibility > 0.0f)
             color += surfaceShading(pp, n, v, l, NoV) * sun->color * (sun->illuminance * visibility);
     }
+
+    // Image based lighting (split-sum approximation).
+    float3 r = reflect(-v, n);
+    float3 diffuseIBL = pp.diffuseColor * ctx.env.diffuse(n);
+    float3 specularIBL = ctx.env.specular(r, pp.perceptualRoughness) *
+                         EnvBRDFApprox(pp.f0, pp.perceptualRoughness, NoV);
+    color += diffuseIBL + specularIBL;
 
     return color + m.emissive;
 }
@@ -146,17 +154,28 @@ Image Renderer::render(const Scene& scene, const Camera& camera) {
 
     // 3. Shading pass: exposure + ACES per sample, stored display-linear.
     start = Clock::now();
-    ShadingContext ctx{scene, camera.position, hasShadow ? &shadow : nullptr};
+    ShadingContext ctx{scene, *scene.environment, camera.position, hasShadow ? &shadow : nullptr};
 
     const float exposure = camera.exposure();
+    const float3 forward = normalize(camera.target - camera.position);
+    const float3 right = normalize(cross(forward, camera.up));
+    const float3 up = cross(right, forward);
+    const float tanHalfFov = std::tan(camera.fovY * 0.5f);
+
     std::vector<float3> samples(static_cast<size_t>(W) * H);
     parallelFor(H, [&](int y) {
         for (int x = 0; x < W; ++x) {
             size_t i = static_cast<size_t>(y) * W + x;
-            float3 luminance{0.0f};
+            float3 luminance;
             int32_t id = gbuffer.material[i];
-            if (id >= 0)
+            if (id < 0) {
+                float ndcX = 2.0f * (x + 0.5f) / W - 1.0f;
+                float ndcY = 1.0f - 2.0f * (y + 0.5f) / H;
+                float3 dir = normalize(forward + right * (ndcX * tanHalfFov * aspect) + up * (ndcY * tanHalfFov));
+                luminance = ctx.env.background(dir);
+            } else {
                 luminance = shade(ctx, scene.materials[id], gbuffer.position[i], gbuffer.normal[i]);
+            }
             samples[i] = tonemapACES(luminance * exposure);
         }
     });
