@@ -1,8 +1,13 @@
+#include <chrono>
 #include <cstdio>
 
 #include "renderer.h"
 
 using namespace prism;
+
+namespace {
+
+enum class SceneKind { Day, Night };
 
 // Three rows of spheres (gold, red plastic, aluminium) with roughness increasing
 // left to right, sitting on a checkered ground plane.
@@ -42,29 +47,88 @@ void addMaterialSpheres(Scene& scene) {
     }
 }
 
+// Bright afternoon: "sunny 16" exposure, 110,000 lux sun, blue sky IBL.
+void buildDay(Scene& scene, Camera& camera) {
+    addMaterialSpheres(scene);
+
+    float3 toSun = normalize(float3{-0.6f, 0.7f, 0.35f});
+    scene.sun = DirectionalLight{-toSun, {1.0f, 0.96f, 0.9f}, 110000.0f, true};
+
+    SkyParams sky;
+    sky.sunDirection = toSun;
+    scene.environment = std::make_unique<Environment>(sky);
+
+    camera.aperture = 16.0f;
+    camera.shutterSpeed = 1.0f / 125.0f;
+    camera.sensitivity = 100.0f;
+}
+
+// Night: moonlight, a dim sky and three colored point lights. The camera opens up to
+// f/1.4, 1/30s, ISO 1600 — the same scene units, just a different exposure.
+void buildNight(Scene& scene, Camera& camera) {
+    addMaterialSpheres(scene);
+
+    float3 toMoon = normalize(float3{0.5f, 0.7f, -0.6f});
+    scene.sun = DirectionalLight{-toMoon, {0.7f, 0.8f, 1.0f}, 0.4f, true};
+
+    SkyParams sky;
+    sky.zenith = {0.05f, 0.08f, 0.2f};
+    sky.horizon = {0.2f, 0.14f, 0.3f};
+    sky.ground = {0.05f, 0.05f, 0.06f};
+    sky.intensity = 1.0f;
+    sky.sunDirection = toMoon;
+    sky.sunColor = {0.8f, 0.85f, 1.0f};
+    sky.sunGlow = 0.3f;
+    sky.sunDiskLuminance = 400.0f;
+    scene.environment = std::make_unique<Environment>(sky);
+
+    const Mesh* bulb = scene.meshes[0].get();  // reuse the sphere mesh
+    struct Lamp {
+        float3 position;
+        float3 color;
+    };
+    const Lamp lamps[] = {
+        {{-2.0f, 0.9f, -0.75f}, {1.0f, 0.55f, 0.2f}},
+        {{0.5f, 0.9f, 0.75f}, {0.2f, 0.7f, 1.0f}},
+        {{2.5f, 0.9f, -0.75f}, {1.0f, 0.25f, 0.6f}},
+    };
+    constexpr float kLumens = 600.0f;
+    constexpr float kBulbRadius = 0.06f;
+    for (const Lamp& lamp : lamps) {
+        scene.pointLights.push_back({lamp.position, lamp.color, kLumens, 8.0f});
+        // Emissive bulb whose luminance matches the light: L = I / (pi r^2).
+        Material glow;
+        glow.baseColor = float3(0.0f);
+        glow.emissive = lamp.color * (kLumens / (4.0f * kPi) / (kPi * kBulbRadius * kBulbRadius));
+        scene.renderables.push_back({bulb, translation(lamp.position) * scaling(kBulbRadius),
+                                     scene.addMaterial(glow), false, 0.0f});
+    }
+
+    camera.aperture = 1.4f;
+    camera.shutterSpeed = 1.0f / 30.0f;
+    camera.sensitivity = 1600.0f;
+}
+
+} // namespace
+
 int main() {
     RenderSettings settings;
     settings.width = 640;
     settings.height = 360;
     settings.ssaa = 2;
 
+    SceneKind kind = SceneKind::Day;
+    const char* output = kind == SceneKind::Day ? "prism_day.png" : "prism_night.png";
+
+    auto start = std::chrono::steady_clock::now();
     Scene scene;
-    addMaterialSpheres(scene);
-    // Sunny 16: the sun delivers ~110,000 lux on a clear day.
-    scene.sun = DirectionalLight{normalize(float3{0.6f, -0.7f, -0.35f}), {1.0f, 0.96f, 0.9f}, 110000.0f, true};
-
-    // Clear blue sky, fed to the renderer as an image based light.
-    SkyParams sky;
-    sky.sunDirection = normalize(float3{-0.6f, 0.7f, 0.35f});
-    scene.environment = std::make_unique<Environment>(sky);
-
     Camera camera;
     camera.position = {0.0f, 3.4f, 7.6f};
     camera.target = {0.0f, 0.1f, -0.2f};
     camera.fovY = radians(36.0f);
-    camera.aperture = 16.0f;
-    camera.shutterSpeed = 1.0f / 125.0f;
-    camera.sensitivity = 100.0f;
+    if (kind == SceneKind::Day) buildDay(scene, camera);
+    else buildNight(scene, camera);
+    double setupMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 
     Renderer renderer(settings);
     Image image = renderer.render(scene, camera);
@@ -72,14 +136,16 @@ int main() {
 
     std::printf("prism: %dx%d (%dx SSAA), EV100 %.2f\n", settings.width, settings.height, settings.ssaa,
                 camera.ev100());
-    std::printf("  geometry pass  %7.1f ms  (%zu triangles)\n", s.geometryMs, s.triangles);
-    std::printf("  shading pass   %7.1f ms\n", s.shadingMs);
-    std::printf("  resolve        %7.1f ms\n", s.resolveMs);
+    std::printf("  scene + IBL bake %7.1f ms\n", setupMs);
+    std::printf("  shadow pass      %7.1f ms\n", s.shadowMs);
+    std::printf("  geometry pass    %7.1f ms  (%zu triangles)\n", s.geometryMs, s.triangles);
+    std::printf("  shading pass     %7.1f ms\n", s.shadingMs);
+    std::printf("  resolve          %7.1f ms\n", s.resolveMs);
 
-    if (!writePNG("prism.png", image)) {
-        std::fprintf(stderr, "failed to write prism.png\n");
+    if (!writePNG(output, image)) {
+        std::fprintf(stderr, "failed to write %s\n", output);
         return 1;
     }
-    std::printf("wrote prism.png\n");
+    std::printf("wrote %s\n", output);
     return 0;
 }

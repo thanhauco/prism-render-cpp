@@ -115,6 +115,18 @@ float3 shade(const ShadingContext& ctx, const Material& m, float3 p, float3 n) {
             color += surfaceShading(pp, n, v, l, NoV) * sun->color * (sun->illuminance * visibility);
     }
 
+    for (const PointLight& light : ctx.scene.pointLights) {
+        float3 toLight = light.position - p;
+        float d2 = dot(toLight, toLight);
+        // Filament's inverse-square falloff, windowed to reach zero at the falloff radius.
+        float factor = d2 / (light.falloff * light.falloff);
+        float window = saturate(1.0f - factor * factor);
+        float attenuation = window * window / std::max(d2, 1e-4f);
+        float candela = light.intensity / (4.0f * kPi);
+        float3 l = toLight / std::sqrt(d2);
+        color += surfaceShading(pp, n, v, l, NoV) * light.color * (candela * attenuation);
+    }
+
     // Image based lighting (split-sum approximation).
     float3 r = reflect(-v, n);
     float3 diffuseIBL = pp.diffuseColor * ctx.env.diffuse(n);

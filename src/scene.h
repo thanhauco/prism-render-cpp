@@ -38,11 +38,19 @@ struct DirectionalLight {
     bool castShadows = true;
 };
 
+struct PointLight {
+    float3 position;
+    float3 color{1.0f};
+    float intensity;     // lumens
+    float falloff = 10;  // radius of influence, meters
+};
+
 struct Scene {
     std::vector<std::unique_ptr<Mesh>> meshes;
     std::vector<Material> materials;
     std::vector<Renderable> renderables;
     std::optional<DirectionalLight> sun;
+    std::vector<PointLight> pointLights;
     std::unique_ptr<Environment> environment;
 
     const Mesh* addMesh(Mesh mesh) {
