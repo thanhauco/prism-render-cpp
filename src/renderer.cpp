@@ -86,11 +86,31 @@ ShadowMap renderShadowMap(const Scene& scene, const DirectionalLight& light, int
     return shadow;
 }
 
+struct SphereOccluder {
+    float3 center;
+    float radius;
+};
+
+// Analytic ambient occlusion from spheres: occlusion ~ cos(angle) * (r / d)^2.
+float sphereOcclusion(float3 p, float3 n, const std::vector<SphereOccluder>& occluders) {
+    float ao = 1.0f;
+    for (const SphereOccluder& s : occluders) {
+        float3 d = s.center - p;
+        float d2 = dot(d, d);
+        float r2 = s.radius * s.radius;
+        if (d2 <= r2 * 1.01f) continue;  // p lies on this sphere
+        float cosine = saturate(dot(n, d) / std::sqrt(d2));
+        ao *= 1.0f - cosine * r2 / d2;
+    }
+    return ao;
+}
+
 struct ShadingContext {
     const Scene& scene;
     const Environment& env;
     float3 cameraPosition;
     const ShadowMap* shadow;
+    std::vector<SphereOccluder> occluders;
 };
 
 float3 shade(const ShadingContext& ctx, const Material& m, float3 p, float3 n) {
@@ -128,11 +148,12 @@ float3 shade(const ShadingContext& ctx, const Material& m, float3 p, float3 n) {
     }
 
     // Image based lighting (split-sum approximation).
+    float ao = sphereOcclusion(p, n, ctx.occluders);
     float3 r = reflect(-v, n);
     float3 diffuseIBL = pp.diffuseColor * ctx.env.diffuse(n);
     float3 specularIBL = ctx.env.specular(r, pp.perceptualRoughness) *
                          EnvBRDFApprox(pp.f0, pp.perceptualRoughness, NoV);
-    color += diffuseIBL + specularIBL;
+    color += (diffuseIBL + specularIBL) * ao;
 
     return color + m.emissive;
 }
@@ -166,7 +187,9 @@ Image Renderer::render(const Scene& scene, const Camera& camera) {
 
     // 3. Shading pass: exposure + ACES per sample, stored display-linear.
     start = Clock::now();
-    ShadingContext ctx{scene, *scene.environment, camera.position, hasShadow ? &shadow : nullptr};
+    ShadingContext ctx{scene, *scene.environment, camera.position, hasShadow ? &shadow : nullptr, {}};
+    for (const Renderable& r : scene.renderables)
+        if (r.occluderRadius > 0.0f) ctx.occluders.push_back({r.model.translation(), r.occluderRadius});
 
     const float exposure = camera.exposure();
     const float3 forward = normalize(camera.target - camera.position);
