@@ -1,5 +1,8 @@
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 
 #include "renderer.h"
 
@@ -109,16 +112,44 @@ void buildNight(Scene& scene, Camera& camera) {
     camera.sensitivity = 1600.0f;
 }
 
+void usage(const char* argv0) {
+    std::fprintf(stderr,
+                 "usage: %s [--scene day|night] [--width N] [--height N] [--ssaa N] [--shadow N] [-o out.png]\n",
+                 argv0);
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     RenderSettings settings;
-    settings.width = 640;
-    settings.height = 360;
-    settings.ssaa = 2;
-
     SceneKind kind = SceneKind::Day;
-    const char* output = kind == SceneKind::Day ? "prism_day.png" : "prism_night.png";
+    std::string output;
+
+    for (int i = 1; i < argc; ++i) {
+        auto next = [&]() -> const char* {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                std::exit(1);
+            }
+            return argv[++i];
+        };
+        if (!std::strcmp(argv[i], "--scene")) {
+            std::string s = next();
+            if (s == "day") kind = SceneKind::Day;
+            else if (s == "night") kind = SceneKind::Night;
+            else { usage(argv[0]); return 1; }
+        } else if (!std::strcmp(argv[i], "--width")) settings.width = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--height")) settings.height = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--ssaa")) settings.ssaa = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--shadow")) settings.shadowMapSize = std::atoi(next());
+        else if (!std::strcmp(argv[i], "-o")) output = next();
+        else { usage(argv[0]); return 1; }
+    }
+    if (settings.width <= 0 || settings.height <= 0 || settings.ssaa <= 0 || settings.shadowMapSize <= 0) {
+        usage(argv[0]);
+        return 1;
+    }
+    if (output.empty()) output = kind == SceneKind::Day ? "prism_day.png" : "prism_night.png";
 
     auto start = std::chrono::steady_clock::now();
     Scene scene;
@@ -143,9 +174,9 @@ int main() {
     std::printf("  resolve          %7.1f ms\n", s.resolveMs);
 
     if (!writePNG(output, image)) {
-        std::fprintf(stderr, "failed to write %s\n", output);
+        std::fprintf(stderr, "failed to write %s\n", output.c_str());
         return 1;
     }
-    std::printf("wrote %s\n", output);
+    std::printf("wrote %s\n", output.c_str());
     return 0;
 }
