@@ -15,8 +15,12 @@ build/%.o: src/%.cpp | build
 build:
 	mkdir -p build
 
+render: build/prism
+	./build/prism --scene day -o prism_day.png
+	./build/prism --scene night -o prism_night.png
+
 clean:
 	rm -rf build
 
-.PHONY: clean
+.PHONY: render clean
 -include $(DEPS)
